@@ -14,11 +14,17 @@ void main() {
   });
 
   testWidgets('increase button logs coffee and saves a record', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const KitchenTallyApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Today: 0'), findsNWidgets(2));
+    expect(find.text('Today: 0'), findsNWidgets(3));
 
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('coffee-increase')),
+      200,
+    );
     await tester.tap(find.byKey(const Key('coffee-increase')));
     await tester.pumpAndSettle();
 
@@ -34,6 +40,8 @@ void main() {
   testWidgets('decrease button removes the latest coffee record', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const KitchenTallyApp());
     await tester.pumpAndSettle();
 
@@ -43,6 +51,10 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('coffee-decrease')),
+      200,
+    );
     await tester.tap(find.byKey(const Key('coffee-decrease')));
     await tester.pumpAndSettle();
 

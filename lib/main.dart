@@ -158,8 +158,10 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
         .toList();
     final todayCoffee = _countForType(todayEvents, HabitType.coffee);
     final todayEggs = _countForType(todayEvents, HabitType.egg);
+    final todayEggFries = _countForType(todayEvents, HabitType.eggFry);
     final totalCoffee = _countForType(_events, HabitType.coffee);
     final totalEggs = _countForType(_events, HabitType.egg);
+    final totalEggFries = _countForType(_events, HabitType.eggFry);
     final totalLogged = _events.length;
     final summaries = _buildDailySummaries(_events);
 
@@ -195,33 +197,110 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
                         _TodayCard(
                           coffeeCount: todayCoffee,
                           eggCount: todayEggs,
+                          eggFryCount: todayEggFries,
                           totalCount: todayEvents.length,
                         ),
                         const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _QuickLogButton(
-                                type: HabitType.coffee,
-                                todayCount: todayCoffee,
-                                onIncrease: () => _addEvent(HabitType.coffee),
-                                onDecrease: todayCoffee > 0
-                                    ? () => _removeEvent(HabitType.coffee)
-                                    : null,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _QuickLogButton(
-                                type: HabitType.egg,
-                                todayCount: todayEggs,
-                                onIncrease: () => _addEvent(HabitType.egg),
-                                onDecrease: todayEggs > 0
-                                    ? () => _removeEvent(HabitType.egg)
-                                    : null,
-                              ),
-                            ),
-                          ],
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final halfWidth = (constraints.maxWidth - 12) / 2;
+                            final isWide = constraints.maxWidth > 640;
+
+                            if (isWide) {
+                              final thirdWidth =
+                                  (constraints.maxWidth - 24) / 3;
+                              return Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  SizedBox(
+                                    width: thirdWidth,
+                                    child: _QuickLogButton(
+                                      type: HabitType.egg,
+                                      todayCount: todayEggs,
+                                      onIncrease: () =>
+                                          _addEvent(HabitType.egg),
+                                      onDecrease: todayEggs > 0
+                                          ? () => _removeEvent(HabitType.egg)
+                                          : null,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: thirdWidth,
+                                    child: _QuickLogButton(
+                                      type: HabitType.eggFry,
+                                      todayCount: todayEggFries,
+                                      onIncrease: () =>
+                                          _addEvent(HabitType.eggFry),
+                                      onDecrease: todayEggFries > 0
+                                          ? () => _removeEvent(HabitType.eggFry)
+                                          : null,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: thirdWidth,
+                                    child: _QuickLogButton(
+                                      type: HabitType.coffee,
+                                      todayCount: todayCoffee,
+                                      onIncrease: () =>
+                                          _addEvent(HabitType.coffee),
+                                      onDecrease: todayCoffee > 0
+                                          ? () => _removeEvent(HabitType.coffee)
+                                          : null,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+
+                            return Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      width: halfWidth,
+                                      child: _QuickLogButton(
+                                        type: HabitType.egg,
+                                        todayCount: todayEggs,
+                                        onIncrease: () =>
+                                            _addEvent(HabitType.egg),
+                                        onDecrease: todayEggs > 0
+                                            ? () => _removeEvent(HabitType.egg)
+                                            : null,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    SizedBox(
+                                      width: halfWidth,
+                                      child: _QuickLogButton(
+                                        type: HabitType.eggFry,
+                                        todayCount: todayEggFries,
+                                        onIncrease: () =>
+                                            _addEvent(HabitType.eggFry),
+                                        onDecrease: todayEggFries > 0
+                                            ? () =>
+                                                  _removeEvent(HabitType.eggFry)
+                                            : null,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: _QuickLogButton(
+                                    type: HabitType.coffee,
+                                    todayCount: todayCoffee,
+                                    onIncrease: () =>
+                                        _addEvent(HabitType.coffee),
+                                    onDecrease: todayCoffee > 0
+                                        ? () => _removeEvent(HabitType.coffee)
+                                        : null,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                         const SizedBox(height: 16),
                         LayoutBuilder(
@@ -246,9 +325,17 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
                                 SizedBox(
                                   width: cardWidth,
                                   child: _StatCard(
-                                    label: 'All eggs',
+                                    label: 'All boiled eggs',
                                     value: '$totalEggs',
                                     accent: HabitType.egg.accent,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _StatCard(
+                                    label: 'All egg fry',
+                                    value: '$totalEggFries',
+                                    accent: HabitType.eggFry.accent,
                                   ),
                                 ),
                                 SizedBox(
@@ -371,11 +458,13 @@ class _TodayCard extends StatelessWidget {
   const _TodayCard({
     required this.coffeeCount,
     required this.eggCount,
+    required this.eggFryCount,
     required this.totalCount,
   });
 
   final int coffeeCount;
   final int eggCount;
+  final int eggFryCount;
   final int totalCount;
 
   @override
@@ -442,6 +531,12 @@ class _TodayCard extends StatelessWidget {
                   label: 'Boiled egg',
                   count: eggCount,
                   color: HabitType.egg.accent,
+                ),
+                _CountPill(
+                  icon: HabitType.eggFry.icon,
+                  label: 'Egg fry',
+                  count: eggFryCount,
+                  color: HabitType.eggFry.accent,
                 ),
               ],
             ),
@@ -732,7 +827,7 @@ class _DaySummaryTile extends StatelessWidget {
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 6),
         child: Text(
-          'Coffee ${summary.coffeeCount}  •  Eggs ${summary.eggCount}',
+          'Coffee ${summary.coffeeCount}  •  Boiled eggs ${summary.eggCount}  •  Egg fry ${summary.eggFryCount}',
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF7D685A)),
@@ -826,7 +921,7 @@ class _EmptyStateCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Tap Increase on coffee or boiled egg, and the app will save that record for you.',
+              'Tap Increase on coffee, boiled egg, or egg fry, and the app will save that record for you.',
               style: Theme.of(
                 context,
               ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF705F53)),
@@ -856,37 +951,43 @@ class _BackgroundBubble extends StatelessWidget {
   }
 }
 
-enum HabitType { coffee, egg }
+enum HabitType { coffee, egg, eggFry }
 
 extension HabitTypeDetails on HabitType {
   String get displayLabel => switch (this) {
     HabitType.coffee => 'Coffee',
     HabitType.egg => 'Boiled egg',
+    HabitType.eggFry => 'Egg Fry',
   };
 
   String get storageKey => switch (this) {
     HabitType.coffee => 'coffee',
     HabitType.egg => 'egg',
+    HabitType.eggFry => 'egg_fry',
   };
 
   String get actionLabel => switch (this) {
     HabitType.coffee => 'Made coffee',
     HabitType.egg => 'Boiled egg',
+    HabitType.eggFry => 'Egg Fry',
   };
 
   String get pastTenseLabel => switch (this) {
     HabitType.coffee => 'Coffee logged',
     HabitType.egg => 'Egg logged',
+    HabitType.eggFry => 'Egg Fry logged',
   };
 
   IconData get icon => switch (this) {
     HabitType.coffee => Icons.coffee_rounded,
     HabitType.egg => Icons.breakfast_dining_rounded,
+    HabitType.eggFry => Icons.egg_alt_rounded,
   };
 
   Color get accent => switch (this) {
     HabitType.coffee => const Color(0xFF8A5A44),
     HabitType.egg => const Color(0xFFB7862E),
+    HabitType.eggFry => const Color(0xFFCF6F4A),
   };
 }
 
@@ -923,19 +1024,22 @@ class DailySummary {
     required this.date,
     required this.coffeeCount,
     required this.eggCount,
+    required this.eggFryCount,
   });
 
   final DateTime date;
   final int coffeeCount;
   final int eggCount;
+  final int eggFryCount;
 
-  int get totalCount => coffeeCount + eggCount;
+  int get totalCount => coffeeCount + eggCount + eggFryCount;
 
-  DailySummary copyWith({int? coffeeCount, int? eggCount}) {
+  DailySummary copyWith({int? coffeeCount, int? eggCount, int? eggFryCount}) {
     return DailySummary(
       date: date,
       coffeeCount: coffeeCount ?? this.coffeeCount,
       eggCount: eggCount ?? this.eggCount,
+      eggFryCount: eggFryCount ?? this.eggFryCount,
     );
   }
 }
@@ -993,6 +1097,7 @@ List<DailySummary> _buildDailySummaries(List<TrackerEvent> events) {
         date: day,
         coffeeCount: event.type == HabitType.coffee ? 1 : 0,
         eggCount: event.type == HabitType.egg ? 1 : 0,
+        eggFryCount: event.type == HabitType.eggFry ? 1 : 0,
       );
       continue;
     }
@@ -1001,6 +1106,8 @@ List<DailySummary> _buildDailySummaries(List<TrackerEvent> events) {
       coffeeCount:
           current.coffeeCount + (event.type == HabitType.coffee ? 1 : 0),
       eggCount: current.eggCount + (event.type == HabitType.egg ? 1 : 0),
+      eggFryCount:
+          current.eggFryCount + (event.type == HabitType.eggFry ? 1 : 0),
     );
   }
 
