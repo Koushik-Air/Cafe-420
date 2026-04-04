@@ -1,0 +1,1 @@
+For my personal usage. Tracks my daily gas usage for coffee and egg boiling.
