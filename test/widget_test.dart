@@ -1,70 +1,83 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:gas_track/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late _FakeTrackerRepository repository;
+
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
     GoogleFonts.config.allowRuntimeFetching = false;
+    repository = _FakeTrackerRepository();
   });
 
-  testWidgets('increase button logs coffee and saves a record', (tester) async {
+  testWidgets('loads the tracker dashboard', (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const KitchenTallyApp());
+
+    await tester.pumpWidget(Cafe420(repository: repository));
     await tester.pumpAndSettle();
 
-    expect(find.text('Today: 0'), findsNWidgets(3));
+    expect(find.text('Boiled egg'), findsOneWidget);
+    expect(find.text('Egg Fry'), findsOneWidget);
+    expect(find.text('Made coffee'), findsOneWidget);
+    expect(find.byKey(const Key('coffee-increase')), findsOneWidget);
+    expect(find.byKey(const Key('coffee-decrease')), findsOneWidget);
+  });
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('coffee-increase')),
-      200,
-    );
+  testWidgets('adds and removes coffee logs while keeping records in sync', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(Cafe420(repository: repository));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byKey(const Key('coffee-increase')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Today: 1'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('coffee-increase')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coffee: 2'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('coffee-decrease')));
+    await tester.pumpAndSettle();
+
     expect(find.text('Coffee: 1'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Records'), 300);
+    await tester.tap(find.text('Records'));
     await tester.pumpAndSettle();
 
     expect(find.text('Coffee logged'), findsOneWidget);
   });
+}
 
-  testWidgets('decrease button removes the latest coffee record', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(800, 1000));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const KitchenTallyApp());
-    await tester.pumpAndSettle();
+class _FakeTrackerRepository implements TrackerRepository {
+  final List<TrackerEvent> _events = <TrackerEvent>[];
+  int _nextId = 1;
 
-    await tester.tap(find.byKey(const Key('coffee-increase')));
-    await tester.pumpAndSettle();
+  @override
+  Future<void> close() async {}
 
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
+  @override
+  Future<void> deleteEvent(int id) async {
+    _events.removeWhere((event) => event.id == id);
+  }
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('coffee-decrease')),
-      200,
-    );
-    await tester.tap(find.byKey(const Key('coffee-decrease')));
-    await tester.pumpAndSettle();
+  @override
+  Future<TrackerEvent> insertEvent(HabitType type, DateTime loggedAt) async {
+    final event = TrackerEvent(id: _nextId++, type: type, loggedAt: loggedAt);
+    _events.insert(0, event);
+    return event;
+  }
 
-    expect(find.text('Today: 0'), findsWidgets);
-    expect(find.text('Coffee: 0'), findsOneWidget);
-
-    await tester.scrollUntilVisible(find.text('Records'), 300);
-    await tester.pumpAndSettle();
-
-    expect(find.text('No records yet'), findsOneWidget);
-    expect(find.text('Coffee logged'), findsNothing);
-  });
+  @override
+  Future<List<TrackerEvent>> loadEvents() async {
+    return List<TrackerEvent>.unmodifiable(_events);
+  }
 }

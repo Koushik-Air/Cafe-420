@@ -1,16 +1,23 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const KitchenTallyApp());
+  runApp(Cafe420());
 }
 
-class KitchenTallyApp extends StatelessWidget {
-  const KitchenTallyApp({super.key});
+class Cafe420 extends StatelessWidget {
+  Cafe420({super.key, TrackerRepository? repository})
+    : repository = repository ?? SqliteTrackerRepository.local();
+
+  final TrackerRepository repository;
 
   @override
   Widget build(BuildContext context) {
@@ -41,29 +48,38 @@ class KitchenTallyApp extends StatelessWidget {
           behavior: SnackBarBehavior.floating,
         ),
       ),
-      home: const TrackerHomePage(),
+      home: TrackerHomePage(repository: repository),
     );
   }
 }
 
 class TrackerHomePage extends StatefulWidget {
-  const TrackerHomePage({super.key});
+  const TrackerHomePage({super.key, required this.repository});
+
+  final TrackerRepository repository;
 
   @override
   State<TrackerHomePage> createState() => _TrackerHomePageState();
 }
 
 class _TrackerHomePageState extends State<TrackerHomePage> {
-  final TrackerRepository _repository = const TrackerRepository();
-  Future<void> _saveQueue = Future<void>.value();
+  late final TrackerRepository _repository;
 
   bool _isLoading = true;
+  int _selectedTabIndex = 0;
   List<TrackerEvent> _events = const [];
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository;
     _loadEvents();
+  }
+
+  @override
+  void dispose() {
+    _repository.close();
+    super.dispose();
   }
 
   Future<void> _loadEvents() async {
@@ -93,19 +109,14 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
   }
 
   Future<void> _addEvent(HabitType type) async {
-    final event = TrackerEvent(type: type, loggedAt: DateTime.now());
-    final updatedEvents = [event, ..._events];
-
-    setState(() {
-      _events = updatedEvents;
-    });
-
-    _saveQueue = _saveQueue.then((_) => _repository.saveEvents(updatedEvents));
     try {
-      await _saveQueue;
+      final event = await _repository.insertEvent(type, DateTime.now());
       if (!mounted) {
         return;
       }
+      setState(() {
+        _events = [event, ..._events];
+      });
       _showMessage('${type.pastTenseLabel} saved.');
     } catch (_) {
       if (!mounted) {
@@ -116,25 +127,26 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
   }
 
   Future<void> _removeEvent(HabitType type) async {
-    final removalIndex = _events.indexWhere((event) => event.type == type);
-    if (removalIndex == -1) {
+    final eventToRemove = _events.firstWhere(
+      (event) => event.type == type,
+      orElse: () =>
+          TrackerEvent(type: HabitType.coffee, loggedAt: DateTime(1970)),
+    );
+    if (eventToRemove.id == null || eventToRemove.type != type) {
       _showMessage('No ${type.displayLabel.toLowerCase()} record to remove.');
       return;
     }
 
-    final updatedEvents = List<TrackerEvent>.from(_events)
-      ..removeAt(removalIndex);
-
-    setState(() {
-      _events = updatedEvents;
-    });
-
-    _saveQueue = _saveQueue.then((_) => _repository.saveEvents(updatedEvents));
     try {
-      await _saveQueue;
+      await _repository.deleteEvent(eventToRemove.id!);
       if (!mounted) {
         return;
       }
+      setState(() {
+        _events = _events
+            .where((event) => event.id != eventToRemove.id)
+            .toList();
+      });
       _showMessage('${type.displayLabel} removed.');
     } catch (_) {
       if (!mounted) {
@@ -166,6 +178,14 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
     final summaries = _buildDailySummaries(_events);
 
     return Scaffold(
+      bottomNavigationBar: _BottomNavBar(
+        selectedIndex: _selectedTabIndex,
+        onSelected: (index) {
+          setState(() {
+            _selectedTabIndex = index;
+          });
+        },
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -192,53 +212,107 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
                       children: [
-                        _AppHeader(dateLabel: _formatHeaderDate(now)),
-                        const SizedBox(height: 20),
-                        _TodayCard(
-                          coffeeCount: todayCoffee,
-                          eggCount: todayEggs,
-                          eggFryCount: todayEggFries,
-                          totalCount: todayEvents.length,
-                        ),
-                        const SizedBox(height: 16),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final halfWidth = (constraints.maxWidth - 12) / 2;
-                            final isWide = constraints.maxWidth > 640;
+                        if (_selectedTabIndex == 0) ...[
+                          _AppHeader(dateLabel: _formatHeaderDate(now)),
+                          const SizedBox(height: 20),
+                          _TodayCard(
+                            coffeeCount: todayCoffee,
+                            eggCount: todayEggs,
+                            eggFryCount: todayEggFries,
+                            totalCount: todayEvents.length,
+                          ),
+                          const SizedBox(height: 16),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final halfWidth = (constraints.maxWidth - 12) / 2;
+                              final isWide = constraints.maxWidth > 640;
 
-                            if (isWide) {
-                              final thirdWidth =
-                                  (constraints.maxWidth - 24) / 3;
-                              return Wrap(
-                                spacing: 12,
-                                runSpacing: 12,
+                              if (isWide) {
+                                final thirdWidth =
+                                    (constraints.maxWidth - 24) / 3;
+                                return Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    SizedBox(
+                                      width: thirdWidth,
+                                      child: _QuickLogButton(
+                                        type: HabitType.egg,
+                                        todayCount: todayEggs,
+                                        onIncrease: () =>
+                                            _addEvent(HabitType.egg),
+                                        onDecrease: todayEggs > 0
+                                            ? () => _removeEvent(HabitType.egg)
+                                            : null,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: thirdWidth,
+                                      child: _QuickLogButton(
+                                        type: HabitType.eggFry,
+                                        todayCount: todayEggFries,
+                                        onIncrease: () =>
+                                            _addEvent(HabitType.eggFry),
+                                        onDecrease: todayEggFries > 0
+                                            ? () =>
+                                                  _removeEvent(HabitType.eggFry)
+                                            : null,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: thirdWidth,
+                                      child: _QuickLogButton(
+                                        type: HabitType.coffee,
+                                        todayCount: todayCoffee,
+                                        onIncrease: () =>
+                                            _addEvent(HabitType.coffee),
+                                        onDecrease: todayCoffee > 0
+                                            ? () =>
+                                                  _removeEvent(HabitType.coffee)
+                                            : null,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }
+
+                              return Column(
                                 children: [
-                                  SizedBox(
-                                    width: thirdWidth,
-                                    child: _QuickLogButton(
-                                      type: HabitType.egg,
-                                      todayCount: todayEggs,
-                                      onIncrease: () =>
-                                          _addEvent(HabitType.egg),
-                                      onDecrease: todayEggs > 0
-                                          ? () => _removeEvent(HabitType.egg)
-                                          : null,
-                                    ),
+                                  Row(
+                                    children: [
+                                      SizedBox(
+                                        width: halfWidth,
+                                        child: _QuickLogButton(
+                                          type: HabitType.egg,
+                                          todayCount: todayEggs,
+                                          onIncrease: () =>
+                                              _addEvent(HabitType.egg),
+                                          onDecrease: todayEggs > 0
+                                              ? () =>
+                                                    _removeEvent(HabitType.egg)
+                                              : null,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: halfWidth,
+                                        child: _QuickLogButton(
+                                          type: HabitType.eggFry,
+                                          todayCount: todayEggFries,
+                                          onIncrease: () =>
+                                              _addEvent(HabitType.eggFry),
+                                          onDecrease: todayEggFries > 0
+                                              ? () => _removeEvent(
+                                                  HabitType.eggFry,
+                                                )
+                                              : null,
+                                        ),
+                                      ),
+                                    ],
                                   ),
+                                  const SizedBox(height: 12),
                                   SizedBox(
-                                    width: thirdWidth,
-                                    child: _QuickLogButton(
-                                      type: HabitType.eggFry,
-                                      todayCount: todayEggFries,
-                                      onIncrease: () =>
-                                          _addEvent(HabitType.eggFry),
-                                      onDecrease: todayEggFries > 0
-                                          ? () => _removeEvent(HabitType.eggFry)
-                                          : null,
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: thirdWidth,
+                                    width: double.infinity,
                                     child: _QuickLogButton(
                                       type: HabitType.coffee,
                                       todayCount: todayCoffee,
@@ -251,166 +325,246 @@ class _TrackerHomePageState extends State<TrackerHomePage> {
                                   ),
                                 ],
                               );
-                            }
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final wide = constraints.maxWidth > 640;
+                              final cardWidth = wide
+                                  ? (constraints.maxWidth - 24) / 3
+                                  : (constraints.maxWidth - 12) / 2;
 
-                            return Column(
-                              children: [
-                                Row(
-                                  children: [
-                                    SizedBox(
-                                      width: halfWidth,
-                                      child: _QuickLogButton(
-                                        type: HabitType.egg,
-                                        todayCount: todayEggs,
-                                        onIncrease: () =>
-                                            _addEvent(HabitType.egg),
-                                        onDecrease: todayEggs > 0
-                                            ? () => _removeEvent(HabitType.egg)
-                                            : null,
-                                      ),
+                              return Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _StatCard(
+                                      label: 'All coffee',
+                                      value: '$totalCoffee',
+                                      accent: HabitType.coffee.accent,
                                     ),
-                                    const SizedBox(width: 12),
-                                    SizedBox(
-                                      width: halfWidth,
-                                      child: _QuickLogButton(
-                                        type: HabitType.eggFry,
-                                        todayCount: todayEggFries,
-                                        onIncrease: () =>
-                                            _addEvent(HabitType.eggFry),
-                                        onDecrease: todayEggFries > 0
-                                            ? () =>
-                                                  _removeEvent(HabitType.eggFry)
-                                            : null,
-                                      ),
+                                  ),
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _StatCard(
+                                      label: 'All boiled eggs',
+                                      value: '$totalEggs',
+                                      accent: HabitType.egg.accent,
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: _QuickLogButton(
-                                    type: HabitType.coffee,
-                                    todayCount: todayCoffee,
-                                    onIncrease: () =>
-                                        _addEvent(HabitType.coffee),
-                                    onDecrease: todayCoffee > 0
-                                        ? () => _removeEvent(HabitType.coffee)
-                                        : null,
                                   ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final wide = constraints.maxWidth > 640;
-                            final cardWidth = wide
-                                ? (constraints.maxWidth - 24) / 3
-                                : (constraints.maxWidth - 12) / 2;
-
-                            return Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: [
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _StatCard(
-                                    label: 'All coffee',
-                                    value: '$totalCoffee',
-                                    accent: HabitType.coffee.accent,
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _StatCard(
+                                      label: 'All egg fry',
+                                      value: '$totalEggFries',
+                                      accent: HabitType.eggFry.accent,
+                                    ),
                                   ),
-                                ),
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _StatCard(
-                                    label: 'All boiled eggs',
-                                    value: '$totalEggs',
-                                    accent: HabitType.egg.accent,
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _StatCard(
+                                      label: 'Days tracked',
+                                      value: '${summaries.length}',
+                                      accent: const Color(0xFF4F8365),
+                                    ),
                                   ),
-                                ),
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _StatCard(
-                                    label: 'All egg fry',
-                                    value: '$totalEggFries',
-                                    accent: HabitType.eggFry.accent,
+                                  SizedBox(
+                                    width: cardWidth,
+                                    child: _StatCard(
+                                      label: 'All logs',
+                                      value: '$totalLogged',
+                                      accent: const Color(0xFF6C7B9A),
+                                    ),
                                   ),
-                                ),
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _StatCard(
-                                    label: 'Days tracked',
-                                    value: '${summaries.length}',
-                                    accent: const Color(0xFF4F8365),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: cardWidth,
-                                  child: _StatCard(
-                                    label: 'All logs',
-                                    value: '$totalLogged',
-                                    accent: const Color(0xFF6C7B9A),
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        if (summaries.isNotEmpty) ...[
-                          const SizedBox(height: 24),
+                                ],
+                              );
+                            },
+                          ),
+                        ] else if (_selectedTabIndex == 1) ...[
                           const _SectionTitle(
                             title: 'Recent Days',
-                            subtitle: 'A quick glance at each day\'s totals.',
+                            subtitle: "A quick glance at each day's totals.",
                           ),
                           const SizedBox(height: 12),
-                          Card(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Column(
-                                children: summaries
-                                    .take(7)
-                                    .map(
-                                      (summary) =>
-                                          _DaySummaryTile(summary: summary),
-                                    )
-                                    .toList(),
+                          if (summaries.isEmpty)
+                            const _EmptyStateCard(
+                              title: 'No recent days yet',
+                              message:
+                                  'Your daily totals will appear here after you start logging.',
+                            )
+                          else
+                            Card(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Column(
+                                  children: summaries
+                                      .take(7)
+                                      .map(
+                                        (summary) =>
+                                            _DaySummaryTile(summary: summary),
+                                      )
+                                      .toList(),
+                                ),
                               ),
                             ),
+                        ] else ...[
+                          const _SectionTitle(
+                            title: 'Records',
+                            subtitle:
+                                'Use + to save a record and - to remove one.',
                           ),
+                          const SizedBox(height: 12),
+                          if (_events.isEmpty)
+                            const _EmptyStateCard()
+                          else
+                            Card(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Column(
+                                  children: _events
+                                      .take(12)
+                                      .map((event) => _RecordTile(event: event))
+                                      .toList(),
+                                ),
+                              ),
+                            ),
                         ],
-                        const SizedBox(height: 24),
-                        const _SectionTitle(
-                          title: 'Records',
-                          subtitle:
-                              'Use + to save a record and - to remove one.',
-                        ),
-                        const SizedBox(height: 12),
-                        if (_events.isEmpty)
-                          const _EmptyStateCard()
-                        else
-                          Card(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Column(
-                                children: _events
-                                    .take(12)
-                                    .map((event) => _RecordTile(event: event))
-                                    .toList(),
-                              ),
-                            ),
-                          ),
                       ],
                     ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavBar extends StatelessWidget {
+  const _BottomNavBar({required this.selectedIndex, required this.onSelected});
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFF0E4D8)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 20,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _BottomNavItem(
+                  label: 'Home',
+                  icon: Icons.home_rounded,
+                  isSelected: selectedIndex == 0,
+                  onTap: () => onSelected(0),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _BottomNavItem(
+                  label: 'Recent Days',
+                  icon: Icons.calendar_month_rounded,
+                  isSelected: selectedIndex == 1,
+                  onTap: () => onSelected(1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _BottomNavItem(
+                  label: 'Records',
+                  icon: Icons.receipt_long_rounded,
+                  isSelected: selectedIndex == 2,
+                  onTap: () => onSelected(2),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = const Color(0xFFB749D8);
+    final inactiveColor = const Color(0xFF2F241D);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+          decoration: BoxDecoration(
+            gradient: isSelected
+                ? const LinearGradient(
+                    colors: [Color(0xFFF1DFF8), Color(0xFFF7EAFD)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 28,
+                color: isSelected ? activeColor : inactiveColor,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: isSelected ? activeColor : inactiveColor,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -892,7 +1046,14 @@ class _RecordTile extends StatelessWidget {
 }
 
 class _EmptyStateCard extends StatelessWidget {
-  const _EmptyStateCard();
+  const _EmptyStateCard({
+    this.title = 'No records yet',
+    this.message =
+        'Tap Increase on coffee, boiled egg, or egg fry, and the app will save that record for you.',
+  });
+
+  final String title;
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -914,14 +1075,14 @@ class _EmptyStateCard extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             Text(
-              'No records yet',
+              title,
               style: Theme.of(
                 context,
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
-              'Tap Increase on coffee, boiled egg, or egg fry, and the app will save that record for you.',
+              message,
               style: Theme.of(
                 context,
               ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF705F53)),
@@ -992,8 +1153,9 @@ extension HabitTypeDetails on HabitType {
 }
 
 class TrackerEvent {
-  const TrackerEvent({required this.type, required this.loggedAt});
+  const TrackerEvent({this.id, required this.type, required this.loggedAt});
 
+  final int? id;
   final HabitType type;
   final DateTime loggedAt;
 
@@ -1009,6 +1171,30 @@ class TrackerEvent {
         orElse: () => HabitType.coffee,
       ),
       loggedAt: DateTime.parse(json['loggedAt'] as String),
+    );
+  }
+
+  factory TrackerEvent.fromDatabase(Map<String, Object?> row) {
+    final typeName = row['type'] as String? ?? HabitType.coffee.storageKey;
+    return TrackerEvent(
+      id: row['id'] as int,
+      type: HabitType.values.firstWhere(
+        (type) => type.storageKey == typeName,
+        orElse: () => HabitType.coffee,
+      ),
+      loggedAt: DateTime.parse(row['logged_at'] as String),
+    );
+  }
+
+  Map<String, Object?> toDatabase() {
+    return {'type': type.storageKey, 'logged_at': loggedAt.toIso8601String()};
+  }
+
+  TrackerEvent copyWith({int? id, HabitType? type, DateTime? loggedAt}) {
+    return TrackerEvent(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      loggedAt: loggedAt ?? this.loggedAt,
     );
   }
 
@@ -1044,35 +1230,152 @@ class DailySummary {
   }
 }
 
-class TrackerRepository {
-  const TrackerRepository();
+abstract class TrackerRepository {
+  Future<List<TrackerEvent>> loadEvents();
+  Future<TrackerEvent> insertEvent(HabitType type, DateTime loggedAt);
+  Future<void> deleteEvent(int id);
+  Future<void> close();
+}
 
-  static const _eventsKey = 'kitchen_tally_events_v1';
+class SqliteTrackerRepository implements TrackerRepository {
+  SqliteTrackerRepository.local({
+    sqflite.DatabaseFactory? databaseFactory,
+    String? databasePath,
+  }) : _databaseFactory = databaseFactory ?? _resolveDatabaseFactory(),
+       _databasePath = databasePath;
 
+  static const _databaseName = 'cafe420_tracker.db';
+  static const _legacyEventsKey = 'kitchen_tally_events_v1';
+  static const _migrationFlagKey = 'tracker_events_db_migrated_v1';
+
+  final sqflite.DatabaseFactory _databaseFactory;
+  final String? _databasePath;
+  sqflite.Database? _database;
+
+  @override
   Future<List<TrackerEvent>> loadEvents() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_eventsKey);
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'tracker_events',
+      orderBy: 'logged_at DESC, id DESC',
+    );
 
-    if (raw == null || raw.isEmpty) {
-      return const [];
-    }
-
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    final events = decoded
-        .map(
-          (item) =>
-              TrackerEvent.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-
-    events.sort((left, right) => right.loggedAt.compareTo(left.loggedAt));
-    return events;
+    return rows.map(TrackerEvent.fromDatabase).toList();
   }
 
-  Future<void> saveEvents(List<TrackerEvent> events) async {
+  @override
+  Future<TrackerEvent> insertEvent(HabitType type, DateTime loggedAt) async {
+    final database = await _openDatabase();
+    final event = TrackerEvent(type: type, loggedAt: loggedAt);
+    final id = await database.insert('tracker_events', event.toDatabase());
+    return event.copyWith(id: id);
+  }
+
+  @override
+  Future<void> deleteEvent(int id) async {
+    final database = await _openDatabase();
+    await database.delete('tracker_events', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<void> close() async {
+    if (_database == null) {
+      return;
+    }
+
+    await _database!.close();
+    _database = null;
+  }
+
+  Future<sqflite.Database> _openDatabase() async {
+    if (_database != null) {
+      return _database!;
+    }
+
+    final databasePath =
+        _databasePath ??
+        path.join(await _databaseFactory.getDatabasesPath(), _databaseName);
+
+    final database = await _databaseFactory.openDatabase(
+      databasePath,
+      options: sqflite.OpenDatabaseOptions(
+        version: 1,
+        onCreate: (db, _) async {
+          await db.execute('''
+            CREATE TABLE tracker_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              type TEXT NOT NULL,
+              logged_at TEXT NOT NULL
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX idx_tracker_events_logged_at ON tracker_events(logged_at DESC)',
+          );
+        },
+      ),
+    );
+
+    await _migrateLegacyPreferencesIfNeeded(database);
+    _database = database;
+    return database;
+  }
+
+  Future<void> _migrateLegacyPreferencesIfNeeded(
+    sqflite.Database database,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = jsonEncode(events.map((event) => event.toJson()).toList());
-    await prefs.setString(_eventsKey, raw);
+    final alreadyMigrated = prefs.getBool(_migrationFlagKey) ?? false;
+    if (alreadyMigrated) {
+      return;
+    }
+
+    final existingCount =
+        sqflite.Sqflite.firstIntValue(
+          await database.rawQuery('SELECT COUNT(*) FROM tracker_events'),
+        ) ??
+        0;
+
+    if (existingCount == 0) {
+      final raw = prefs.getString(_legacyEventsKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw) as List<dynamic>;
+        final events =
+            decoded
+                .map(
+                  (item) => TrackerEvent.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList()
+              ..sort((left, right) => left.loggedAt.compareTo(right.loggedAt));
+
+        final batch = database.batch();
+        for (final event in events) {
+          batch.insert('tracker_events', event.toDatabase());
+        }
+        await batch.commit(noResult: true);
+        await prefs.remove(_legacyEventsKey);
+      }
+    }
+
+    await prefs.setBool(_migrationFlagKey, true);
+  }
+
+  static sqflite.DatabaseFactory _resolveDatabaseFactory() {
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Web is not supported for local database storage.',
+      );
+    }
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.windows:
+        sqfliteFfiInit();
+        return databaseFactoryFfi;
+      default:
+        return sqflite.databaseFactory;
+    }
   }
 }
 
